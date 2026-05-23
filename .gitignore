@@ -1,0 +1,10 @@
+.env
+venv/
+frontend/node_modules/
+frontend/build/
+__pycache__/
+.pytest_cache/
+*.pyc
+food_order.db
+openapi.json
+sdk/
