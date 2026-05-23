@@ -37,6 +37,14 @@ function getItemImage(item) {
   return images[category] || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=500&q=70";
 }
 
+function isValidCustomerName(value) {
+  if (value.trim() === "") {
+    return true;
+  }
+
+  return /^[A-Za-z]+(?: [A-Za-z]+)*$/.test(value.trim());
+}
+
 function isValidWhatsAppNumber(value) {
   return /^\+[1-9]\d{9,14}$/.test(value.trim());
 }
@@ -93,7 +101,7 @@ function MenuCard({ item, quantity, onIncrement, onDecrement }) {
   );
 }
 
-function CartPanel({ cart, orderForm, errors, isSending, onFormChange, onRemove, onSubmit }) {
+function CartPanel({ cart, orderForm, errors, isSending, orderFeedback, onFormChange, onRemove, onSubmit }) {
   const canSubmit = cart.items.length > 0 && !errors.customer_name && !errors.whatsapp_number && orderForm.customer_name && orderForm.whatsapp_number;
 
   return (
@@ -144,6 +152,7 @@ function CartPanel({ cart, orderForm, errors, isSending, onFormChange, onRemove,
             onChange={(event) => onFormChange("customer_name", event.target.value)}
             aria-invalid={Boolean(errors.customer_name)}
             placeholder="John Doe"
+            autoComplete="name"
           />
           {errors.customer_name && <small>{errors.customer_name}</small>}
         </label>
@@ -154,18 +163,26 @@ function CartPanel({ cart, orderForm, errors, isSending, onFormChange, onRemove,
             onChange={(event) => onFormChange("whatsapp_number", event.target.value)}
             aria-invalid={Boolean(errors.whatsapp_number)}
             placeholder="+919876543210"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
           />
           {errors.whatsapp_number && <small>{errors.whatsapp_number}</small>}
         </label>
         <button className={styles.primaryButton} type="submit" disabled={!canSubmit || isSending}>
           {isSending ? "Sending..." : "Send Order"}
         </button>
+        {orderFeedback && (
+          <div className={`${styles.orderFeedback} ${orderFeedback.type === "success" ? styles.orderFeedbackSuccess : styles.orderFeedbackError}`} role="status">
+            {orderFeedback.message}
+          </div>
+        )}
       </form>
     </aside>
   );
 }
 
-function CustomerView({ menu, cart, orderForm, errors, isSending, searchTerm, category, setSearchTerm, setCategory, onFormChange, onSubmit }) {
+function CustomerView({ menu, cart, orderForm, errors, isSending, orderFeedback, searchTerm, category, setSearchTerm, setCategory, onFormChange, onSubmit }) {
   const filteredMenu = useMemo(() => {
     return menu
       .filter((item) => item.is_available)
@@ -217,6 +234,7 @@ function CustomerView({ menu, cart, orderForm, errors, isSending, searchTerm, ca
         orderForm={orderForm}
         errors={errors}
         isSending={isSending}
+        orderFeedback={orderFeedback}
         onFormChange={onFormChange}
         onRemove={cart.remove}
         onSubmit={onSubmit}
@@ -225,21 +243,43 @@ function CustomerView({ menu, cart, orderForm, errors, isSending, searchTerm, ca
   );
 }
 
-function StaffDashboard({ menu, orders, menuForm, onMenuFormChange, onAddMenuItem, onUpdateStatus, onToggleAvailability }) {
+function StaffDashboard({
+  menu,
+  orders,
+  menuForm,
+  orderLookupId,
+  selectedOrder,
+  showAllOrders,
+  editingMenuItemId,
+  onMenuFormChange,
+  onAddMenuItem,
+  onEditMenuItem,
+  onCancelEdit,
+  onUpdateStatus,
+  onCancelOrder,
+  onToggleAvailability,
+  onOrderLookupChange,
+  onShowAllOrdersChange,
+  onFindOrder,
+  onClearOrderDetails,
+}) {
+  const activeCount = orders.filter((order) => !["cancelled", "delivered"].includes(order.status)).length;
   const counts = {
     pending: orders.filter((order) => order.status === "pending").length,
     preparing: orders.filter((order) => order.status === "preparing").length,
     ready: orders.filter((order) => order.status === "out-for-delivery").length,
-    total: orders.length,
+    shown: orders.length,
   };
   const visibleMenu = uniqueMenuItems(menu);
   const duplicateCount = menu.length - visibleMenu.length;
-  const duplicateName = visibleMenu.some((item) => normalizeName(item.name) === normalizeName(menuForm.name));
+  const duplicateName = visibleMenu.some(
+    (item) => normalizeName(item.name) === normalizeName(menuForm.name) && item.id !== editingMenuItemId,
+  );
 
   return (
     <>
       <section className={styles.statsGrid}>
-        <div><span>Active</span><strong>{counts.total}</strong></div>
+        <div><span>{showAllOrders ? "Shown" : "Active"}</span><strong>{counts.shown}</strong></div>
         <div><span>Pending</span><strong>{counts.pending}</strong></div>
         <div><span>Preparing</span><strong>{counts.preparing}</strong></div>
         <div><span>Ready</span><strong>{counts.ready}</strong></div>
@@ -250,7 +290,7 @@ function StaffDashboard({ menu, orders, menuForm, onMenuFormChange, onAddMenuIte
           <div className={styles.staffPanelTitle}>
             <div>
               <span className={styles.eyebrow}>Menu Setup</span>
-              <h2>Add Menu Item</h2>
+              <h2>{editingMenuItemId ? "Edit Menu Item" : "Add Menu Item"}</h2>
             </div>
             {duplicateName && <span className={styles.warningPill}>Duplicate</span>}
           </div>
@@ -262,7 +302,16 @@ function StaffDashboard({ menu, orders, menuForm, onMenuFormChange, onAddMenuIte
           <label>Description<input value={menuForm.description} onChange={(event) => onMenuFormChange("description", event.target.value)} required /></label>
           <label>Price<input type="number" min="0" step="0.01" value={menuForm.price} onChange={(event) => onMenuFormChange("price", event.target.value)} required /></label>
           <label className={styles.inlineCheck}><input type="checkbox" checked={menuForm.is_available} onChange={(event) => onMenuFormChange("is_available", event.target.checked)} /> Available</label>
-          <button className={styles.primaryButton} type="submit" disabled={duplicateName}>Save Item</button>
+          <div className={styles.actionGroup}>
+            <button className={styles.primaryButton} type="submit" disabled={duplicateName}>
+              {editingMenuItemId ? "Update Item" : "Save Item"}
+            </button>
+            {editingMenuItemId && (
+              <button type="button" className={styles.secondaryButton} onClick={onCancelEdit}>
+                Cancel Edit
+              </button>
+            )}
+          </div>
         </form>
 
         <section className={styles.staffPanel}>
@@ -280,14 +329,19 @@ function StaffDashboard({ menu, orders, menuForm, onMenuFormChange, onAddMenuIte
                   <strong>{item.name}</strong>
                   <span>{formatCurrency(item.price)}</span>
                 </div>
-                <button
-                  type="button"
-                  className={item.is_available ? styles.availableButton : styles.unavailableButton}
-                  onClick={() => onToggleAvailability(item)}
-                  aria-pressed={item.is_available}
-                >
-                  {item.is_available ? "Available" : "Unavailable"}
-                </button>
+                <div className={styles.actionGroup}>
+                  <button type="button" className={styles.editButton} onClick={() => onEditMenuItem(item)}>
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className={item.is_available ? styles.availableButton : styles.unavailableButton}
+                    onClick={() => onToggleAvailability(item)}
+                    aria-pressed={item.is_available}
+                  >
+                    {item.is_available ? "Available" : "Unavailable"}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -298,10 +352,57 @@ function StaffDashboard({ menu, orders, menuForm, onMenuFormChange, onAddMenuIte
         <div className={styles.panelHeader}>
           <div>
             <span className={styles.eyebrow}>Live Queue</span>
-            <h2>Active Orders</h2>
+            <h2>{showAllOrders ? "All Orders" : "Active Orders"}</h2>
           </div>
           <span className={styles.timestamp}>Updated {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
         </div>
+        <div className={styles.orderModeToggle} aria-label="Order list filter">
+          <button
+            type="button"
+            className={!showAllOrders ? styles.activeFilter : ""}
+            onClick={() => onShowAllOrdersChange(false)}
+          >
+            Active Orders
+          </button>
+          <button
+            type="button"
+            className={showAllOrders ? styles.activeFilter : ""}
+            onClick={() => onShowAllOrdersChange(true)}
+          >
+            All Orders
+          </button>
+          {showAllOrders && <span>{activeCount} active in this list</span>}
+        </div>
+        <form className={styles.orderLookup} onSubmit={onFindOrder}>
+          <label>
+            Find Order
+            <input
+              type="number"
+              min="1"
+              value={orderLookupId}
+              onChange={(event) => onOrderLookupChange(event.target.value)}
+              placeholder="Enter order ID"
+            />
+          </label>
+          <button type="submit">View Details</button>
+        </form>
+        {selectedOrder && (
+          <section className={styles.orderDetails} aria-label="Order details">
+            <div className={styles.staffPanelTitle}>
+              <div>
+                <span className={styles.eyebrow}>Order Details</span>
+                <h2>#{selectedOrder.id}</h2>
+              </div>
+              <button type="button" className={styles.secondaryButton} onClick={onClearOrderDetails}>Close</button>
+            </div>
+            <dl>
+              <div><dt>Customer</dt><dd>{selectedOrder.customer_name}</dd></div>
+              <div><dt>WhatsApp</dt><dd>{selectedOrder.whatsapp_number}</dd></div>
+              <div><dt>Items</dt><dd>{selectedOrder.items.join(", ")}</dd></div>
+              <div><dt>Status</dt><dd><span className={styles.statusPill}>{selectedOrder.status}</span></dd></div>
+            </dl>
+          </section>
+        )}
         <div className={styles.tableWrap}>
           <table>
             <thead>
@@ -312,11 +413,12 @@ function StaffDashboard({ menu, orders, menuForm, onMenuFormChange, onAddMenuIte
                 <th>Items</th>
                 <th>Status</th>
                 <th>Next Step</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {orders.length === 0 ? (
-                <tr><td colSpan="6">No active orders.</td></tr>
+                <tr><td colSpan="7">{showAllOrders ? "No orders found." : "No active orders."}</td></tr>
               ) : (
                 orders.map((order) => {
                   const nextStatus = nextStatusFor(order.status);
@@ -332,9 +434,31 @@ function StaffDashboard({ menu, orders, menuForm, onMenuFormChange, onAddMenuIte
                       <td>
                         {nextStatus ? (
                           <button type="button" onClick={() => onUpdateStatus(order.id, nextStatus)}>{nextLabel}</button>
+                        ) : order.status === "cancelled" ? (
+                          <span className={styles.emptyText}>Cancelled</span>
                         ) : (
                           <span className={styles.emptyText}>Complete</span>
                         )}
+                      </td>
+                      <td>
+                        <div className={styles.actionGroup}>
+                          <button
+                            type="button"
+                            className={styles.secondaryButton}
+                            onClick={() => onFindOrder(order.id)}
+                          >
+                            Details
+                          </button>
+                          {!["cancelled", "delivered"].includes(order.status) && (
+                            <button
+                              type="button"
+                              className={styles.cancelButton}
+                              onClick={() => onCancelOrder(order.id)}
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -353,17 +477,27 @@ function App() {
   const [menu, setMenu] = useState([]);
   const [orders, setOrders] = useState([]);
   const [notice, setNotice] = useState("");
+  const [orderFeedback, setOrderFeedback] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [category, setCategory] = useState("All");
   const [isSending, setIsSending] = useState(false);
-  const [menuForm, setMenuForm] = useState({ name: "", description: "", price: "", is_available: true });
+  const defaultMenuForm = { name: "", description: "", price: "", is_available: true };
+  const [menuForm, setMenuForm] = useState(defaultMenuForm);
+  const [editingMenuItemId, setEditingMenuItemId] = useState(null);
   const [orderForm, setOrderForm] = useState({ customer_name: "", whatsapp_number: "" });
+  const [orderLookupId, setOrderLookupId] = useState("");
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [showAllOrders, setShowAllOrders] = useState(false);
   const visibleMenu = useMemo(() => uniqueMenuItems(menu), [menu]);
   const cart = useCart(visibleMenu.filter((item) => item.is_available));
 
   const errors = useMemo(() => ({
-    customer_name: orderForm.customer_name.trim() ? "" : "Customer name is required.",
-    whatsapp_number: isValidWhatsAppNumber(orderForm.whatsapp_number) ? "" : "Use international format, e.g. +919876543210.",
+    customer_name: isValidCustomerName(orderForm.customer_name)
+      ? ""
+      : "Enter letters and spaces only.",
+    whatsapp_number: isValidWhatsAppNumber(orderForm.whatsapp_number)
+      ? ""
+      : "Use international format, e.g. +919876543210.",
   }), [orderForm]);
 
   const showNotice = useCallback((message) => {
@@ -372,15 +506,20 @@ function App() {
     showNotice.timer = window.setTimeout(() => setNotice(""), 4200);
   }, []);
 
+  const clearOrderFeedback = useCallback(() => {
+    setOrderFeedback(null);
+  }, []);
+
   const loadData = useCallback(async () => {
     try {
-      const [menuRes, orderRes] = await Promise.all([axios.get(`${API_BASE}/menu/`), axios.get(`${API_BASE}/orders/`)]);
+      const ordersUrl = showAllOrders ? `${API_BASE}/orders/?include_all=true` : `${API_BASE}/orders/`;
+      const [menuRes, orderRes] = await Promise.all([axios.get(`${API_BASE}/menu/`), axios.get(ordersUrl)]);
       setMenu(menuRes.data);
       setOrders(orderRes.data);
     } catch {
       showNotice("Backend is not reachable.");
     }
-  }, [showNotice]);
+  }, [showAllOrders, showNotice]);
 
   useEffect(() => {
     loadData();
@@ -390,19 +529,69 @@ function App() {
 
   const addMenuItem = async (event) => {
     event.preventDefault();
-    const duplicateName = visibleMenu.some((item) => normalizeName(item.name) === normalizeName(menuForm.name));
-    if (duplicateName) {
-      showNotice("That menu item already exists. Use the availability button instead.");
+    const normalizedName = menuForm.name.trim();
+    const normalizedDescription = menuForm.description.trim();
+    const parsedPrice = Number(menuForm.price);
+
+    if (!normalizedName || !normalizedDescription || Number.isNaN(parsedPrice)) {
+      showNotice("Enter a name, description, and price to save the menu item.");
       return;
     }
+
+    const duplicateName = visibleMenu.some(
+      (item) => normalizeName(item.name) === normalizeName(normalizedName) && item.id !== editingMenuItemId,
+    );
+
+    if (duplicateName) {
+      showNotice("That menu item already exists. Edit the existing item or choose a different name.");
+      return;
+    }
+
     try {
-      await axios.post(`${API_BASE}/menu/`, { ...menuForm, price: Number(menuForm.price) });
-      setMenuForm({ name: "", description: "", price: "", is_available: true });
-      showNotice("Menu item saved.");
+      if (editingMenuItemId) {
+        await axios.patch(`${API_BASE}/menu/${editingMenuItemId}`, {
+          name: normalizedName,
+          description: normalizedDescription,
+          price: parsedPrice,
+          is_available: menuForm.is_available,
+        });
+        showNotice("Menu item updated.");
+      } else {
+        await axios.post(`${API_BASE}/menu/`, {
+          name: normalizedName,
+          description: normalizedDescription,
+          price: parsedPrice,
+          is_available: menuForm.is_available,
+        });
+        showNotice("Menu item saved.");
+      }
+
+      setMenuForm(defaultMenuForm);
+      setEditingMenuItemId(null);
       loadData();
     } catch (err) {
       showNotice(err.response?.data?.detail || "Menu item could not be saved.");
     }
+  };
+
+  const startEditingMenuItem = (item) => {
+    setEditingMenuItemId(item.id);
+    setMenuForm({
+      name: item.name,
+      description: item.description,
+      price: String(item.price),
+      is_available: item.is_available,
+    });
+  };
+
+  const cancelEditingMenuItem = () => {
+    setEditingMenuItemId(null);
+    setMenuForm(defaultMenuForm);
+  };
+
+  const handleOrderFormChange = (field, value) => {
+    clearOrderFeedback();
+    setOrderForm((current) => ({ ...current, [field]: value }));
   };
 
   const placeOrder = async (event) => {
@@ -415,10 +604,16 @@ function App() {
       const orderedItems = cart.items.flatMap((item) => Array(item.quantity).fill(item.name));
       await axios.post(`${API_BASE}/orders/`, { ...orderForm, items: orderedItems });
       setOrderForm({ customer_name: "", whatsapp_number: "" });
+      setOrderFeedback({ type: "success", message: "Order placed successfully. WhatsApp confirmation sent." });
+      window.clearTimeout(placeOrder.feedbackTimer);
+      placeOrder.feedbackTimer = window.setTimeout(() => setOrderFeedback(null), 4000);
       cart.clear();
       showNotice("Order placed successfully. WhatsApp confirmation sent.");
       loadData();
     } catch (err) {
+      setOrderFeedback({ type: "error", message: err.response?.data?.detail || "Order could not be placed." });
+      window.clearTimeout(placeOrder.feedbackTimer);
+      placeOrder.feedbackTimer = window.setTimeout(() => setOrderFeedback(null), 4000);
       showNotice(err.response?.data?.detail || "Order could not be placed.");
     } finally {
       setIsSending(false);
@@ -432,6 +627,38 @@ function App() {
       loadData();
     } catch (err) {
       showNotice(err.response?.data?.detail || "Status could not be updated.");
+    }
+  };
+
+  const cancelOrder = async (id) => {
+    try {
+      await axios.delete(`${API_BASE}/orders/${id}`);
+      setSelectedOrder((current) => (current?.id === id ? null : current));
+      showNotice("Order cancelled and customer notified.");
+      loadData();
+    } catch (err) {
+      showNotice(err.response?.data?.detail || "Order could not be cancelled.");
+    }
+  };
+
+  const findOrder = async (eventOrId) => {
+    if (eventOrId?.preventDefault) {
+      eventOrId.preventDefault();
+    }
+
+    const id = typeof eventOrId === "number" ? eventOrId : Number(orderLookupId);
+    if (!id) {
+      showNotice("Enter an order ID to view details.");
+      return;
+    }
+
+    try {
+      const response = await axios.get(`${API_BASE}/orders/${id}`);
+      setSelectedOrder(response.data);
+      setOrderLookupId(String(id));
+    } catch (err) {
+      setSelectedOrder(null);
+      showNotice(err.response?.data?.detail || "Order details could not be loaded.");
     }
   };
 
@@ -468,11 +695,12 @@ function App() {
           orderForm={orderForm}
           errors={errors}
           isSending={isSending}
+          orderFeedback={orderFeedback}
           searchTerm={searchTerm}
           category={category}
           setSearchTerm={setSearchTerm}
           setCategory={setCategory}
-          onFormChange={(field, value) => setOrderForm((current) => ({ ...current, [field]: value }))}
+          onFormChange={handleOrderFormChange}
           onSubmit={placeOrder}
         />
       ) : (
@@ -480,10 +708,21 @@ function App() {
           menu={menu}
           orders={orders}
           menuForm={menuForm}
+          orderLookupId={orderLookupId}
+          selectedOrder={selectedOrder}
+          showAllOrders={showAllOrders}
+          editingMenuItemId={editingMenuItemId}
           onMenuFormChange={(field, value) => setMenuForm((current) => ({ ...current, [field]: value }))}
           onAddMenuItem={addMenuItem}
+          onEditMenuItem={startEditingMenuItem}
+          onCancelEdit={cancelEditingMenuItem}
           onUpdateStatus={updateStatus}
+          onCancelOrder={cancelOrder}
           onToggleAvailability={toggleAvailability}
+          onOrderLookupChange={setOrderLookupId}
+          onShowAllOrdersChange={setShowAllOrders}
+          onFindOrder={findOrder}
+          onClearOrderDetails={() => setSelectedOrder(null)}
         />
       )}
     </main>

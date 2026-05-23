@@ -48,6 +48,26 @@
   box-shadow: 0 12px 28px rgba(6, 95, 70, 0.12);
 }
 
+.orderFeedback {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.orderFeedbackSuccess {
+  border: 1px solid #a7f3d0;
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.orderFeedbackError {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
 .tabs {
   display: inline-flex;
   gap: 6px;
@@ -405,6 +425,98 @@ input[aria-invalid="true"] {
   box-shadow: 0 10px 24px rgba(15, 118, 110, 0.2);
 }
 
+.ordersPanel .cancelButton {
+  background: #dc2626;
+  box-shadow: 0 10px 24px rgba(220, 38, 38, 0.16);
+}
+
+.secondaryButton {
+  background: #e0f2fe;
+  color: #075985;
+  box-shadow: none;
+}
+
+.editButton {
+  min-width: 88px;
+  background: #f1f5f9;
+  color: #0f172a;
+  box-shadow: none;
+}
+
+.orderLookup {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) auto;
+  gap: 10px;
+  align-items: end;
+  margin: 16px 0;
+}
+
+.orderLookup label {
+  display: grid;
+  gap: 7px;
+  color: #32433a;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.orderDetails {
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid #dbe7df;
+  border-radius: 16px;
+  background: #f8fbf9;
+}
+
+.orderDetails dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.orderDetails div {
+  display: grid;
+  gap: 4px;
+}
+
+.orderDetails dt {
+  color: #64746b;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.orderDetails dd {
+  margin: 0;
+  font-weight: 800;
+}
+
+.actionGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.orderModeToggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 16px 0 0;
+}
+
+.orderModeToggle button {
+  background: #f1f5f9;
+  color: #42524a;
+  box-shadow: none;
+}
+
+.orderModeToggle span {
+  color: #64746b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .staffGrid,
 .statsGrid {
   display: grid;
@@ -582,6 +694,10 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .orderDetails dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .cartPanel {
     position: static;
   }
@@ -615,5 +731,10 @@ th {
   .cartItem,
   .panelHeader {
     flex-direction: column;
+  }
+
+  .orderLookup,
+  .orderDetails dl {
+    grid-template-columns: 1fr;
   }
 }
