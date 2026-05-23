@@ -163,6 +163,10 @@ def test_cancel_order_marks_cancelled_and_sends_notification(client):
     assert active_orders.status_code == 200
     assert active_orders.json() == []
 
+    all_orders = client.get("/orders/?include_all=true")
+    assert all_orders.status_code == 200
+    assert all_orders.json()[0]["status"] == "cancelled"
+
 
 def test_invalid_requests(client):
     missing_order = client.get("/orders/999")
@@ -170,3 +174,41 @@ def test_invalid_requests(client):
 
     invalid_status = client.patch("/orders/999", json={"status": "done"})
     assert invalid_status.status_code == 422
+
+
+def test_update_menu_item(client):
+    add_menu_item(client, name="Pizza")
+
+    updated = client.patch(
+        "/menu/1",
+        json={
+            "name": "Veggie Pizza",
+            "description": "Crispy crust with fresh vegetables",
+            "price": 249.0,
+            "is_available": False,
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Veggie Pizza"
+    assert updated.json()["description"] == "Crispy crust with fresh vegetables"
+    assert updated.json()["price"] == 249.0
+    assert updated.json()["is_available"] is False
+
+
+def test_update_menu_item_rejects_duplicate_name(client):
+    add_menu_item(client, name="Pizza")
+    add_menu_item(client, name="Burger")
+
+    duplicate = client.patch(
+        "/menu/2",
+        json={
+            "name": "Pizza",
+            "description": "Burger description",
+            "price": 180.0,
+            "is_available": True,
+        },
+    )
+
+    assert duplicate.status_code == 400
+    assert duplicate.json()["detail"] == "Menu item already exists"

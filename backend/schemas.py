@@ -11,6 +11,9 @@ class MenuItemBase(BaseModel):
 class MenuItemCreate(MenuItemBase):
     pass
 
+class MenuItemUpdate(MenuItemBase):
+    pass
+
 class MenuAvailabilityUpdate(BaseModel):
     is_available: bool
 

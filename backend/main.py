@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from . import models, schemas, database, whatsapp_service 
@@ -99,6 +99,28 @@ def create_menu_item(item: schemas.MenuItemCreate, db: Session = Depends(databas
     db.refresh(db_item)
     return db_item
 
+@app.patch("/menu/{item_id}", response_model=schemas.MenuItem, operation_id="update_menu_item")
+def update_menu_item(item_id: int, item: schemas.MenuItemUpdate, db: Session = Depends(database.get_db)):
+    db_item = db.query(models.MenuItem).filter(models.MenuItem.id == item_id).first()
+    if not db_item:
+        raise HTTPException(status_code=404, detail="Menu item not found")
+
+    duplicate_item = (
+        db.query(models.MenuItem)
+        .filter(models.MenuItem.name.ilike(item.name.strip()), models.MenuItem.id != item_id)
+        .first()
+    )
+    if duplicate_item:
+        raise HTTPException(status_code=400, detail="Menu item already exists")
+
+    db_item.name = item.name.strip()
+    db_item.description = item.description.strip()
+    db_item.price = item.price
+    db_item.is_available = item.is_available
+    db.commit()
+    db.refresh(db_item)
+    return db_item
+
 @app.get("/menu/", response_model=List[schemas.MenuItem], operation_id="list_menu_items")
 def get_menu(db: Session = Depends(database.get_db)):
     return db.query(models.MenuItem).all()
@@ -165,13 +187,14 @@ def update_order_status(order_id: int, status_update: schemas.OrderStatusUpdate,
     return {"message": "Status updated"}
 
 @app.get("/orders/", response_model=List[schemas.Order], operation_id="list_orders")
-def list_orders(db: Session = Depends(database.get_db)):
-    active_orders = (
-        db.query(models.Order)
-        .filter(models.Order.status.notin_(["cancelled", "delivered"]))
-        .all()
-    )
-    return [serialize_order(order) for order in active_orders]
+def list_orders(
+    include_all: bool = Query(False, description="Return cancelled and delivered orders too."),
+    db: Session = Depends(database.get_db),
+):
+    query = db.query(models.Order)
+    if not include_all:
+        query = query.filter(models.Order.status.notin_(["cancelled", "delivered"]))
+    return [serialize_order(order) for order in query.all()]
 
 @app.get("/orders/{order_id}", response_model=schemas.Order, operation_id="get_order_by_id")
 def get_order(order_id: int, db: Session = Depends(database.get_db)):
