@@ -16,6 +16,14 @@ function formatCurrency(value) {
   return `Rs. ${Number(value).toFixed(2)}`;
 }
 
+function formatEta(estimatedDeliveryTime) {
+  if (!estimatedDeliveryTime) {
+    return "After confirmation";
+  }
+
+  return new Date(estimatedDeliveryTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 function getCategory(item) {
   const text = `${item.name} ${item.description}`.toLowerCase();
   return CATEGORIES.find((category) => category !== "All" && text.includes(category.toLowerCase())) || "Other";
@@ -58,10 +66,18 @@ function normalizeName(value) {
   return value.trim().toLowerCase();
 }
 
+function getRestaurantName(item) {
+  return item.restaurant_name || "Default";
+}
+
+function getCartKey(item) {
+  return `${getRestaurantName(item)}::${item.name}`;
+}
+
 function uniqueMenuItems(menu) {
   const seen = new Set();
   return menu.filter((item) => {
-    const key = normalizeName(item.name);
+    const key = `${normalizeName(getRestaurantName(item))}::${normalizeName(item.name)}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -88,11 +104,11 @@ function MenuCard({ item, quantity, onIncrement, onDecrement }) {
         </div>
         <p>{item.description}</p>
         <div className={styles.quantityControls} aria-label={`${item.name} quantity controls`}>
-          <button type="button" onClick={() => onDecrement(item.name)} disabled={quantity === 0} aria-label={`Decrease ${item.name}`}>
+          <button type="button" onClick={() => onDecrement(item.cartKey)} disabled={quantity === 0} aria-label={`Decrease ${item.name}`}>
             -
           </button>
           <span aria-live="polite">{quantity}</span>
-          <button type="button" onClick={() => onIncrement(item.name)} aria-label={`Increase ${item.name}`}>
+          <button type="button" onClick={() => onIncrement(item.cartKey)} aria-label={`Increase ${item.name}`}>
             +
           </button>
         </div>
@@ -101,8 +117,16 @@ function MenuCard({ item, quantity, onIncrement, onDecrement }) {
   );
 }
 
-function CartPanel({ cart, orderForm, errors, isSending, orderFeedback, onFormChange, onRemove, onSubmit }) {
-  const canSubmit = cart.items.length > 0 && !errors.customer_name && !errors.whatsapp_number && orderForm.customer_name && orderForm.whatsapp_number;
+function CartPanel({ cart, orderForm, errors, isSending, orderFeedback, couponCode, couponValidation, onCouponChange, onFormChange, onRemove, onSubmit }) {
+  const canSubmit =
+    cart.items.length > 0 &&
+    !errors.customer_name &&
+    !errors.whatsapp_number &&
+    orderForm.customer_name &&
+    orderForm.whatsapp_number &&
+    (!couponCode || couponValidation.isValid);
+  const discountAmount = couponValidation.isValid ? Number(couponValidation.discount_amount) || 0 : 0;
+  const payableTotal = Math.max(0, cart.summary.total - discountAmount);
 
   return (
     <aside className={styles.cartPanel}>
@@ -122,14 +146,14 @@ function CartPanel({ cart, orderForm, errors, isSending, orderFeedback, onFormCh
       ) : (
         <div className={styles.cartItems}>
           {cart.items.map((item) => (
-            <div className={styles.cartItem} key={item.name}>
+            <div className={styles.cartItem} key={item.cartKey}>
               <div>
                 <strong>{item.name}</strong>
                 <span>Qty {item.quantity} x {formatCurrency(item.price)}</span>
               </div>
               <div>
                 <b>{formatCurrency(item.subtotal)}</b>
-                <button type="button" onClick={() => onRemove(item.name)}>Remove</button>
+                <button type="button" onClick={() => onRemove(item.cartKey)}>Remove</button>
               </div>
             </div>
           ))}
@@ -139,12 +163,27 @@ function CartPanel({ cart, orderForm, errors, isSending, orderFeedback, onFormCh
       <div className={styles.billBox}>
         <div><span>Subtotal</span><strong>{formatCurrency(cart.summary.subtotal)}</strong></div>
         <div><span>GST 5%</span><strong>{formatCurrency(cart.summary.tax)}</strong></div>
+        {discountAmount > 0 && <div><span>Coupon Discount</span><strong>-{formatCurrency(discountAmount)}</strong></div>}
         <div><span>Items</span><strong>{cart.summary.totalItems}</strong></div>
         <div><span>Est. prep time</span><strong>{cart.summary.prepTime || 0} min</strong></div>
-        <div className={styles.totalRow}><span>Payable</span><strong>{formatCurrency(cart.summary.total)}</strong></div>
+        <div className={styles.totalRow}><span>Payable</span><strong>{formatCurrency(payableTotal)}</strong></div>
       </div>
 
       <form className={styles.orderForm} onSubmit={onSubmit}>
+        <label>
+          Coupon Code
+          <input
+            value={couponCode}
+            onChange={(event) => onCouponChange(event.target.value.toUpperCase())}
+            placeholder="NEXT7K9P2Q"
+            autoComplete="off"
+          />
+          {couponCode && (
+            <small className={couponValidation.isValid ? styles.orderFeedbackSuccess : styles.orderFeedbackError}>
+              {couponValidation.message || "Checking coupon..."}
+            </small>
+          )}
+        </label>
         <label>
           Customer Name
           <input
@@ -182,18 +221,27 @@ function CartPanel({ cart, orderForm, errors, isSending, orderFeedback, onFormCh
   );
 }
 
-function CustomerView({ menu, cart, orderForm, errors, isSending, orderFeedback, searchTerm, category, setSearchTerm, setCategory, onFormChange, onSubmit }) {
+function CustomerView({ menu, cart, orderForm, errors, isSending, orderFeedback, couponCode, couponValidation, searchTerm, category, restaurants, selectedRestaurant, setSearchTerm, setCategory, setSelectedRestaurant, onCouponChange, onFormChange, onSubmit }) {
   const filteredMenu = useMemo(() => {
     return menu
       .filter((item) => item.is_available)
+      .filter((item) => getRestaurantName(item) === selectedRestaurant)
       .filter((item) => category === "All" || getCategory(item) === category)
       .filter((item) => `${item.name} ${item.description}`.toLowerCase().includes(searchTerm.toLowerCase()));
-  }, [category, menu, searchTerm]);
+  }, [category, menu, searchTerm, selectedRestaurant]);
 
   return (
     <section className={styles.customerGrid}>
       <div className={styles.menuColumn}>
         <div className={styles.menuToolbar}>
+          <label className={styles.searchField}>
+            Restaurant
+            <select value={selectedRestaurant} onChange={(event) => setSelectedRestaurant(event.target.value)}>
+              {restaurants.map((restaurant) => (
+                <option key={restaurant} value={restaurant}>{restaurant}</option>
+              ))}
+            </select>
+          </label>
           <label className={styles.searchField}>
             Search menu
             <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search pizza, dosa, burger..." />
@@ -220,7 +268,7 @@ function CustomerView({ menu, cart, orderForm, errors, isSending, orderFeedback,
               <MenuCard
                 key={item.id}
                 item={item}
-                quantity={cart.quantities[item.name] || 0}
+                quantity={cart.quantities[item.cartKey] || 0}
                 onIncrement={cart.increment}
                 onDecrement={cart.decrement}
               />
@@ -235,6 +283,9 @@ function CustomerView({ menu, cart, orderForm, errors, isSending, orderFeedback,
         errors={errors}
         isSending={isSending}
         orderFeedback={orderFeedback}
+        couponCode={couponCode}
+        couponValidation={couponValidation}
+        onCouponChange={onCouponChange}
         onFormChange={onFormChange}
         onRemove={cart.remove}
         onSubmit={onSubmit}
@@ -273,7 +324,10 @@ function StaffDashboard({
   const visibleMenu = uniqueMenuItems(menu);
   const duplicateCount = menu.length - visibleMenu.length;
   const duplicateName = visibleMenu.some(
-    (item) => normalizeName(item.name) === normalizeName(menuForm.name) && item.id !== editingMenuItemId,
+    (item) =>
+      normalizeName(item.name) === normalizeName(menuForm.name) &&
+      normalizeName(getRestaurantName(item)) === normalizeName(menuForm.restaurant_name || "Default") &&
+      item.id !== editingMenuItemId,
   );
 
   return (
@@ -299,6 +353,7 @@ function StaffDashboard({
             <input value={menuForm.name} onChange={(event) => onMenuFormChange("name", event.target.value)} required />
             {duplicateName && <small className={styles.fieldHint}>This item is already on the menu.</small>}
           </label>
+          <label>Restaurant<input value={menuForm.restaurant_name} onChange={(event) => onMenuFormChange("restaurant_name", event.target.value)} required /></label>
           <label>Description<input value={menuForm.description} onChange={(event) => onMenuFormChange("description", event.target.value)} required /></label>
           <label>Price<input type="number" min="0" step="0.01" value={menuForm.price} onChange={(event) => onMenuFormChange("price", event.target.value)} required /></label>
           <label className={styles.inlineCheck}><input type="checkbox" checked={menuForm.is_available} onChange={(event) => onMenuFormChange("is_available", event.target.checked)} /> Available</label>
@@ -327,7 +382,7 @@ function StaffDashboard({
               <div className={styles.availabilityRow} key={item.id}>
                 <div>
                   <strong>{item.name}</strong>
-                  <span>{formatCurrency(item.price)}</span>
+                  <span>{getRestaurantName(item)} - {formatCurrency(item.price)}</span>
                 </div>
                 <div className={styles.actionGroup}>
                   <button type="button" className={styles.editButton} onClick={() => onEditMenuItem(item)}>
@@ -397,9 +452,11 @@ function StaffDashboard({
             </div>
             <dl>
               <div><dt>Customer</dt><dd>{selectedOrder.customer_name}</dd></div>
+              <div><dt>Restaurant</dt><dd>{selectedOrder.restaurant_name || "Default"}</dd></div>
               <div><dt>WhatsApp</dt><dd>{selectedOrder.whatsapp_number}</dd></div>
               <div><dt>Items</dt><dd>{selectedOrder.items.join(", ")}</dd></div>
               <div><dt>Status</dt><dd><span className={styles.statusPill}>{selectedOrder.status}</span></dd></div>
+              <div><dt>ETA</dt><dd>{formatEta(selectedOrder.estimated_delivery_time)}</dd></div>
             </dl>
           </section>
         )}
@@ -409,16 +466,18 @@ function StaffDashboard({
               <tr>
                 <th>ID</th>
                 <th>Customer</th>
+                <th>Restaurant</th>
                 <th>WhatsApp</th>
                 <th>Items</th>
                 <th>Status</th>
+                <th>ETA</th>
                 <th>Next Step</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {orders.length === 0 ? (
-                <tr><td colSpan="7">{showAllOrders ? "No orders found." : "No active orders."}</td></tr>
+                <tr><td colSpan="9">{showAllOrders ? "No orders found." : "No active orders."}</td></tr>
               ) : (
                 orders.map((order) => {
                   const nextStatus = nextStatusFor(order.status);
@@ -428,9 +487,11 @@ function StaffDashboard({
                     <tr key={order.id}>
                       <td>#{order.id}</td>
                       <td>{order.customer_name}</td>
+                      <td>{order.restaurant_name || "Default"}</td>
                       <td>{order.whatsapp_number}</td>
                       <td>{order.items.join(", ")}</td>
                       <td><span className={styles.statusPill}>{statusLabel}</span></td>
+                      <td>{formatEta(order.estimated_delivery_time)}</td>
                       <td>
                         {nextStatus ? (
                           <button type="button" onClick={() => onUpdateStatus(order.id, nextStatus)}>{nextLabel}</button>
@@ -481,15 +542,26 @@ function App() {
   const [searchTerm, setSearchTerm] = useState("");
   const [category, setCategory] = useState("All");
   const [isSending, setIsSending] = useState(false);
-  const defaultMenuForm = { name: "", description: "", price: "", is_available: true };
+  const defaultMenuForm = { name: "", description: "", price: "", is_available: true, restaurant_name: "Default" };
   const [menuForm, setMenuForm] = useState(defaultMenuForm);
   const [editingMenuItemId, setEditingMenuItemId] = useState(null);
   const [orderForm, setOrderForm] = useState({ customer_name: "", whatsapp_number: "" });
+  const [couponCode, setCouponCode] = useState("");
+  const [couponValidation, setCouponValidation] = useState({
+    isValid: false,
+    discount_amount: 0,
+    message: "",
+  });
   const [orderLookupId, setOrderLookupId] = useState("");
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showAllOrders, setShowAllOrders] = useState(false);
-  const visibleMenu = useMemo(() => uniqueMenuItems(menu), [menu]);
-  const cart = useCart(visibleMenu.filter((item) => item.is_available));
+  const visibleMenu = useMemo(() => uniqueMenuItems(menu).map((item) => ({ ...item, cartKey: getCartKey(item) })), [menu]);
+  const restaurants = useMemo(() => {
+    const names = Array.from(new Set(visibleMenu.map((item) => getRestaurantName(item))));
+    return names.length ? names.sort((a, b) => a.localeCompare(b)) : ["Default"];
+  }, [visibleMenu]);
+  const [selectedRestaurant, setSelectedRestaurant] = useState("Default");
+  const cart = useCart(visibleMenu.filter((item) => item.is_available && getRestaurantName(item) === selectedRestaurant));
 
   const errors = useMemo(() => ({
     customer_name: isValidCustomerName(orderForm.customer_name)
@@ -499,6 +571,12 @@ function App() {
       ? ""
       : "Use international format, e.g. +919876543210.",
   }), [orderForm]);
+
+  useEffect(() => {
+    if (!restaurants.includes(selectedRestaurant)) {
+      setSelectedRestaurant(restaurants[0] || "Default");
+    }
+  }, [restaurants, selectedRestaurant]);
 
   const showNotice = useCallback((message) => {
     setNotice(message);
@@ -531,6 +609,7 @@ function App() {
     event.preventDefault();
     const normalizedName = menuForm.name.trim();
     const normalizedDescription = menuForm.description.trim();
+    const normalizedRestaurant = menuForm.restaurant_name.trim() || "Default";
     const parsedPrice = Number(menuForm.price);
 
     if (!normalizedName || !normalizedDescription || Number.isNaN(parsedPrice)) {
@@ -539,7 +618,10 @@ function App() {
     }
 
     const duplicateName = visibleMenu.some(
-      (item) => normalizeName(item.name) === normalizeName(normalizedName) && item.id !== editingMenuItemId,
+      (item) =>
+        normalizeName(item.name) === normalizeName(normalizedName) &&
+        normalizeName(getRestaurantName(item)) === normalizeName(normalizedRestaurant) &&
+        item.id !== editingMenuItemId,
     );
 
     if (duplicateName) {
@@ -554,6 +636,7 @@ function App() {
           description: normalizedDescription,
           price: parsedPrice,
           is_available: menuForm.is_available,
+          restaurant_name: normalizedRestaurant,
         });
         showNotice("Menu item updated.");
       } else {
@@ -562,6 +645,7 @@ function App() {
           description: normalizedDescription,
           price: parsedPrice,
           is_available: menuForm.is_available,
+          restaurant_name: normalizedRestaurant,
         });
         showNotice("Menu item saved.");
       }
@@ -581,6 +665,7 @@ function App() {
       description: item.description,
       price: String(item.price),
       is_available: item.is_available,
+      restaurant_name: getRestaurantName(item),
     });
   };
 
@@ -594,21 +679,95 @@ function App() {
     setOrderForm((current) => ({ ...current, [field]: value }));
   };
 
+  const handleCouponChange = (value) => {
+    clearOrderFeedback();
+    setCouponCode(value);
+  };
+
+  useEffect(() => {
+    let active = true;
+    const code = couponCode.trim();
+
+    if (!code) {
+      setCouponValidation({ isValid: false, discount_amount: 0, message: "" });
+      return () => {
+        active = false;
+      };
+    }
+
+    if (cart.items.length === 0) {
+      setCouponValidation({
+        isValid: false,
+        discount_amount: 0,
+        message: "Add items to the cart before applying a coupon.",
+      });
+      return () => {
+        active = false;
+      };
+    }
+
+    const validateCoupon = async () => {
+      try {
+        const response = await axios.post(`${API_BASE}/coupons/validate`, {
+          coupon_code: code,
+          items: cart.items.flatMap((item) => Array(item.quantity).fill(item.name)),
+          restaurant_name: selectedRestaurant,
+        });
+
+        if (!active) return;
+        setCouponValidation({
+          isValid: response.data.is_valid,
+          discount_amount: response.data.discount_amount,
+          message: response.data.message,
+        });
+      } catch (err) {
+        if (!active) return;
+        setCouponValidation({
+          isValid: false,
+          discount_amount: 0,
+          message: err.response?.data?.detail || "Coupon could not be validated.",
+        });
+      }
+    };
+
+    const timer = window.setTimeout(validateCoupon, 300);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [cart.items, couponCode, selectedRestaurant]);
+
   const placeOrder = async (event) => {
     event.preventDefault();
     if (cart.items.length === 0 || errors.customer_name || errors.whatsapp_number) return;
+    if (couponCode && !couponValidation.isValid) {
+      setOrderFeedback({ type: "error", message: couponValidation.message || "Enter a valid coupon code." });
+      showNotice(couponValidation.message || "Enter a valid coupon code.");
+      return;
+    }
 
     setIsSending(true);
     try {
       // The backend accepts a list of item names, so quantities are sent as repeated names.
       const orderedItems = cart.items.flatMap((item) => Array(item.quantity).fill(item.name));
-      await axios.post(`${API_BASE}/orders/`, { ...orderForm, items: orderedItems });
+      const response = await axios.post(`${API_BASE}/orders/`, {
+        ...orderForm,
+        items: orderedItems,
+        restaurant_name: selectedRestaurant,
+        coupon_code: couponCode.trim() || null,
+      });
       setOrderForm({ customer_name: "", whatsapp_number: "" });
-      setOrderFeedback({ type: "success", message: "Order placed successfully. WhatsApp confirmation sent." });
+      setCouponCode("");
+      setCouponValidation({ isValid: false, discount_amount: 0, message: "" });
+      const generatedCoupon = response.data.generated_coupon_code;
+      const successMessage = generatedCoupon
+        ? `Order placed successfully. Next order coupon: ${generatedCoupon}`
+        : "Order placed successfully. WhatsApp confirmation sent.";
+      setOrderFeedback({ type: "success", message: successMessage });
       window.clearTimeout(placeOrder.feedbackTimer);
       placeOrder.feedbackTimer = window.setTimeout(() => setOrderFeedback(null), 4000);
       cart.clear();
-      showNotice("Order placed successfully. WhatsApp confirmation sent.");
+      showNotice(successMessage);
       loadData();
     } catch (err) {
       setOrderFeedback({ type: "error", message: err.response?.data?.detail || "Order could not be placed." });
@@ -696,10 +855,16 @@ function App() {
           errors={errors}
           isSending={isSending}
           orderFeedback={orderFeedback}
+          couponCode={couponCode}
+          couponValidation={couponValidation}
           searchTerm={searchTerm}
           category={category}
+          restaurants={restaurants}
+          selectedRestaurant={selectedRestaurant}
           setSearchTerm={setSearchTerm}
           setCategory={setCategory}
+          setSelectedRestaurant={setSelectedRestaurant}
+          onCouponChange={handleCouponChange}
           onFormChange={handleOrderFormChange}
           onSubmit={placeOrder}
         />

@@ -3,6 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 const CART_STORAGE_KEY = "food-order-cart";
 const TAX_RATE = 0.05;
 
+function getCartKey(item) {
+  return item.cartKey || `${item.restaurant_name || "Default"}::${item.name}`;
+}
+
 function readStoredCart() {
   try {
     return JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY)) || {};
@@ -57,11 +61,12 @@ export function useCart(menuItems) {
   const items = useMemo(
     () =>
       menuItems
-        .filter((item) => quantities[item.name] > 0)
+        .filter((item) => quantities[getCartKey(item)] > 0)
         .map((item) => ({
           ...item,
-          quantity: quantities[item.name],
-          subtotal: quantities[item.name] * Number(item.price),
+          cartKey: getCartKey(item),
+          quantity: quantities[getCartKey(item)],
+          subtotal: quantities[getCartKey(item)] * Number(item.price),
         })),
     [menuItems, quantities]
   );
