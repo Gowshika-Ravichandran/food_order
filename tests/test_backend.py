@@ -40,7 +40,7 @@ def client(monkeypatch):
     app.dependency_overrides.clear()
 
 
-def add_menu_item(client, name="Pizza", is_available=True):
+def add_menu_item(client, name="Pizza", is_available=True, restaurant_name="Default"):
     return client.post(
         "/menu/",
         json={
@@ -48,17 +48,34 @@ def add_menu_item(client, name="Pizza", is_available=True):
             "description": f"{name} description",
             "price": 199.0,
             "is_available": is_available,
+            "restaurant_name": restaurant_name,
         },
     )
 
 
-def place_order(client, items=None):
+def place_order(client, items=None, whatsapp_number="+917904854535", restaurant_name="Default", coupon_code=None):
+    payload = {
+        "customer_name": "John Doe",
+        "whatsapp_number": whatsapp_number,
+        "items": items or ["Pizza"],
+        "restaurant_name": restaurant_name,
+    }
+    if coupon_code is not None:
+        payload["coupon_code"] = coupon_code
     return client.post(
         "/orders/",
+        json=payload,
+    )
+
+
+def create_coupon(client, code="SAVE10", restaurant_name="Default"):
+    return client.post(
+        "/coupons/",
         json={
-            "customer_name": "John Doe",
-            "whatsapp_number": "+917904854535",
-            "items": items or ["Pizza"],
+            "code": code,
+            "discount_type": "percentage",
+            "discount_value": 10,
+            "restaurant_name": restaurant_name,
         },
     )
 
@@ -140,6 +157,8 @@ def test_status_updates_must_follow_required_order(client):
 
     delivered = client.patch(f"/orders/{order_id}", json={"status": "delivered"})
     assert delivered.status_code == 200
+    assert "Estimated delivery" not in client.sent_messages[-1][1]
+    assert client.get(f"/orders/{order_id}").json()["estimated_delivery_time"] is None
 
     after_delivered = client.patch(f"/orders/{order_id}", json={"status": "preparing"})
     assert after_delivered.status_code == 400
@@ -212,3 +231,102 @@ def test_update_menu_item_rejects_duplicate_name(client):
 
     assert duplicate.status_code == 400
     assert duplicate.json()["detail"] == "Menu item already exists"
+
+
+def test_order_estimate_is_given_after_confirmation_only(client):
+    add_menu_item(client)
+
+    invalid = place_order(client, whatsapp_number="abc")
+    assert invalid.status_code == 400
+    assert "valid phone number" in invalid.json()["detail"]
+
+    ordered = place_order(client)
+    assert ordered.status_code == 200
+    assert ordered.json()["estimated_delivery_time"] is None
+    assert "Estimated delivery" not in client.sent_messages[0][1]
+    assert "Pending confirmation" in client.sent_messages[0][1]
+
+    confirmed = client.patch(f"/orders/{ordered.json()['id']}", json={"status": "preparing"})
+    assert confirmed.status_code == 200
+    assert "Estimated delivery" in client.sent_messages[-1][1]
+
+    fetched = client.get(f"/orders/{ordered.json()['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["estimated_delivery_time"]
+
+
+def test_incoming_whatsapp_cancel_message_cancels_latest_active_order(client):
+    add_menu_item(client)
+    order_id = place_order(client).json()["id"]
+
+    webhook = client.post("/whatsapp/incoming", json={"from": "+917904854535", "body": "Cancel"})
+
+    assert webhook.status_code == 200
+    assert webhook.json()["message"] == "Order cancelled via WhatsApp"
+    assert client.get(f"/orders/{order_id}").json()["status"] == "cancelled"
+
+
+def test_customer_gets_random_next_order_coupon(client):
+    add_menu_item(client)
+
+    ordered = place_order(client)
+
+    assert ordered.status_code == 200
+    coupon_code = ordered.json()["generated_coupon_code"]
+    assert coupon_code.startswith("NEXT")
+    coupon_messages = [message for _, message in client.sent_messages if coupon_code in message]
+    assert coupon_messages
+    assert "10% off your next order" in coupon_messages[0]
+
+
+def test_generated_next_order_coupon_applies_once(client):
+    add_menu_item(client)
+
+    first_order = place_order(client)
+    assert first_order.status_code == 200
+    coupon_code = first_order.json()["generated_coupon_code"]
+
+    discounted_order = place_order(client, whatsapp_number="+917904854536", coupon_code=coupon_code)
+    assert discounted_order.status_code == 200
+    assert discounted_order.json()["coupon_code"] == coupon_code
+    assert discounted_order.json()["discount_amount"] == pytest.approx(20.9)
+    assert discounted_order.json()["total_amount"] == pytest.approx(188.05)
+
+    reused_coupon = place_order(client, whatsapp_number="+917904854537", coupon_code=coupon_code)
+    assert reused_coupon.status_code == 400
+    assert reused_coupon.json()["detail"] == "Coupon has reached its usage limit"
+
+
+def test_multi_restaurant_orders_use_selected_restaurant(client):
+    add_menu_item(client, name="Pizza", restaurant_name="North")
+    add_menu_item(client, name="Burger", restaurant_name="South")
+
+    north_order = place_order(client, items=["Pizza"], restaurant_name="North")
+    assert north_order.status_code == 200
+    assert north_order.json()["restaurant_name"] == "North"
+
+    south_order = place_order(client, items=["Burger"], restaurant_name="South")
+    assert south_order.status_code == 200
+    assert south_order.json()["restaurant_name"] == "South"
+
+    wrong_restaurant = place_order(client, items=["Burger"], restaurant_name="North")
+    assert wrong_restaurant.status_code == 400
+    assert "restaurant 'North'" in wrong_restaurant.json()["detail"]
+
+
+def test_coupon_discount_can_be_validated_and_applied(client):
+    add_menu_item(client)
+    assert create_coupon(client).status_code == 200
+
+    validation = client.post(
+        "/coupons/validate",
+        json={"coupon_code": "SAVE10", "items": ["Pizza"], "restaurant_name": "Default"},
+    )
+    assert validation.status_code == 200
+    assert validation.json()["discount_amount"] == pytest.approx(20.9)
+
+    ordered = place_order(client, coupon_code="SAVE10")
+    assert ordered.status_code == 200
+    assert ordered.json()["coupon_code"] == "SAVE10"
+    assert ordered.json()["discount_amount"] == pytest.approx(20.9)
+    assert ordered.json()["total_amount"] == pytest.approx(188.05)
